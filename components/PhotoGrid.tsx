@@ -26,7 +26,7 @@ export default function PhotoGrid({ photos }: Props) {
       gap: 8,
     }}>
       {photos.map(photo => (
-        
+        <a
           key={photo.id}
           href={`https://drive.google.com/file/d/${photo.drive_file_id}/view`}
           target="_blank"

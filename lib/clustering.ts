@@ -33,8 +33,16 @@ async function runOwnClustering(eventId: string): Promise<void> {
   const faces = await getFacesByEvent(eventId)
   if (faces.length === 0) return
 
-  const embeddings = faces.map(f => f.embedding as number[])
-  const clusterIds = dbscan(embeddings, 0.4, 2) // epsilon=0.4, minPts=2
+  // FIX: Supabase returns pgvector data as a string (e.g. "[0.12, 0.45]"). 
+  // We must parse it into a real JavaScript number array for math to work.
+  const embeddings = faces.map(f => {
+    if (typeof f.embedding === 'string') {
+      return JSON.parse(f.embedding) as number[]
+    }
+    return f.embedding as number[]
+  })
+
+  const clusterIds = dbscan(embeddings, 0.25, 2) // epsilon=0.4, minPts=2
 
   // group faces by cluster label
   const groups = new Map<number, Face[]>()
@@ -47,10 +55,10 @@ async function runOwnClustering(eventId: string): Promise<void> {
 
   // create a cluster row for each group, assign faces to it
   for (const [, groupFaces] of groups) {
-    const representative = groupFaces[0]
+    // We'll set representative thumbnail later, for now just pass null
     const cluster = await createCluster(
       eventId,
-      null,             // thumbnail will be set later from photo
+      null,             
       groupFaces.length
     )
     for (const face of groupFaces) {
