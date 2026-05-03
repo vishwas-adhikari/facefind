@@ -60,15 +60,17 @@ export default function FaceClusterGrid({ clusters, onSelect, onLabelUpdate }: P
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: 40,
+            overflow: 'hidden',
           }}>
             {cluster.representative_thumbnail_url ? (
               <img
-                src={cluster.representative_thumbnail_url}
+                src={`/api/thumbnail?url=${encodeURIComponent(cluster.representative_thumbnail_url)}`}
                 alt={cluster.label ?? 'Person'}
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                loading="lazy"
               />
             ) : (
-              '👤'
+              <span>👤</span>
             )}
           </div>
 

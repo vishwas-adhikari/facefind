@@ -47,32 +47,46 @@ def embed(req: EmbedRequest):
                 detail=f"Could not fetch image from URL: {req.image_url}"
             )
 
-        # 2. convert to PIL image then numpy array (what DeepFace expects)
+        # 2. convert to PIL image
         image = Image.open(io.BytesIO(response.content)).convert("RGB")
+
+        # 3. upscale small images — RetinaFace detects better on larger images
+        w, h = image.size
+        min_dim = min(w, h)
+        if min_dim < 800:
+            scale = 800 / min_dim
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            image = image.resize((new_w, new_h), Image.LANCZOS)
+
         image_array = np.array(image)
 
-        # 3. run DeepFace — detect all faces, generate ArcFace embeddings
+        # 4. run DeepFace — detect all faces, generate ArcFace embeddings
         results = DeepFace.represent(
             img_path=image_array,
             model_name="ArcFace",
-            detector_backend="retinaface",  # best for group photos
-            enforce_detection=False,        # don't crash if no face found
-            align=True                      # align face before embedding
+            detector_backend="retinaface",
+            enforce_detection=False,
+            align=True
         )
 
-        # 4. format results
+        # 5. filter out very low confidence detections
         faces = []
         for r in results:
+            confidence = r.get("face_confidence", 0.0)
+            if confidence < 0.7:   # skip blurry / partial faces
+                continue
+
             facial_area = r.get("facial_area", {})
             faces.append(FaceResult(
-                embedding=r["embedding"],   # 512-dim vector
+                embedding=r["embedding"],
                 bbox=BoundingBox(
                     x=facial_area.get("x", 0),
                     y=facial_area.get("y", 0),
                     w=facial_area.get("w", 0),
                     h=facial_area.get("h", 0)
                 ),
-                confidence=r.get("face_confidence", 0.0)
+                confidence=confidence
             ))
 
         return EmbedResponse(faces=faces, total_faces=len(faces))

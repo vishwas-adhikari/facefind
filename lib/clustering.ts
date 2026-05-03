@@ -1,5 +1,6 @@
 import type { Face } from '@/types'
 import { getFacesByEvent, createCluster, updateFaceCluster } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase'
 
 // ─── Strategy switch ──────────────────────────────────────────────────────────
 
@@ -33,8 +34,7 @@ async function runOwnClustering(eventId: string): Promise<void> {
   const faces = await getFacesByEvent(eventId)
   if (faces.length === 0) return
 
-  // FIX: Supabase returns pgvector data as a string (e.g. "[0.12, 0.45]"). 
-  // We must parse it into a real JavaScript number array for math to work.
+  // Supabase returns pgvector as string — parse into number[]
   const embeddings = faces.map(f => {
     if (typeof f.embedding === 'string') {
       return JSON.parse(f.embedding) as number[]
@@ -42,25 +42,32 @@ async function runOwnClustering(eventId: string): Promise<void> {
     return f.embedding as number[]
   })
 
-  const clusterIds = dbscan(embeddings, 0.25, 2) // epsilon=0.4, minPts=2
+  const clusterIds = dbscan(embeddings, 0.25, 2)
 
   // group faces by cluster label
   const groups = new Map<number, Face[]>()
   for (let i = 0; i < faces.length; i++) {
     const label = clusterIds[i]
-    if (label === -1) continue // noise — unassigned face, skip
+    if (label === -1) continue
     if (!groups.has(label)) groups.set(label, [])
     groups.get(label)!.push(faces[i])
   }
 
-  // create a cluster row for each group, assign faces to it
+  // create cluster row for each group
   for (const [, groupFaces] of groups) {
-    // We'll set representative thumbnail later, for now just pass null
+    // get representative thumbnail from the first face's photo
+    const { data: photoData } = await supabaseAdmin
+      .from('photos')
+      .select('drive_thumbnail_url')
+      .eq('id', groupFaces[0].photo_id)
+      .single()
+
     const cluster = await createCluster(
       eventId,
-      null,             
+      photoData?.drive_thumbnail_url ?? null,
       groupFaces.length
     )
+
     for (const face of groupFaces) {
       await updateFaceCluster(face.id, cluster.id)
     }
@@ -71,24 +78,23 @@ async function runOwnClustering(eventId: string): Promise<void> {
 
 function dbscan(
   embeddings: number[][],
-  epsilon: number,   // max cosine distance to be considered a neighbour
-  minPts: number     // min neighbours to be a core point
+  epsilon: number,
+  minPts: number
 ): number[] {
   const n = embeddings.length
-  const labels = new Array(n).fill(-1)  // -1 = unvisited/noise
+  const labels = new Array(n).fill(-1)
   let clusterId = 0
 
   for (let i = 0; i < n; i++) {
-    if (labels[i] !== -1) continue      // already visited
+    if (labels[i] !== -1) continue
 
     const neighbours = getNeighbours(embeddings, i, epsilon)
 
     if (neighbours.length < minPts) {
-      labels[i] = -1                    // mark as noise
+      labels[i] = -1
       continue
     }
 
-    // start a new cluster
     labels[i] = clusterId
     const seeds = [...neighbours]
 
@@ -97,7 +103,7 @@ function dbscan(
       const idx = seeds[j]
 
       if (labels[idx] === -1) {
-        labels[idx] = clusterId         // noise → border point
+        labels[idx] = clusterId
       }
 
       if (labels[idx] !== -1 && labels[idx] !== undefined) {
@@ -109,7 +115,7 @@ function dbscan(
 
       const newNeighbours = getNeighbours(embeddings, idx, epsilon)
       if (newNeighbours.length >= minPts) {
-        seeds.push(...newNeighbours)    // expand cluster
+        seeds.push(...newNeighbours)
       }
 
       j++
@@ -143,5 +149,5 @@ function cosineDistance(a: number[], b: number[]): number {
     normB += b[i] * b[i]
   }
   const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB))
-  return 1 - similarity  // distance = 1 - similarity
+  return 1 - similarity
 }
