@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import FaceClusterGrid from '@/components/FaceClusterGrid'
 import type { Cluster } from '@/types'
-import { getClustersByEvent, searchClustersByLabel, updateClusterLabel } from '@/lib/supabase'
+import { getClustersByEvent } from '@/lib/supabase'
 
 export default function EventPage() {
   const { eventId } = useParams<{ eventId: string }>()
@@ -25,21 +25,36 @@ export default function EventPage() {
     load()
   }, [eventId])
 
-  // search with debounce
+  // search with debounce — calls API route instead of Supabase directly
   useEffect(() => {
     if (!searchQuery.trim()) {
       getClustersByEvent(eventId).then(setClusters)
       return
     }
     const t = setTimeout(async () => {
-      const results = await searchClustersByLabel(eventId, searchQuery)
-      setClusters(results)
+      const res = await fetch(
+        `/api/clusters/search?eventId=${eventId}&query=${encodeURIComponent(searchQuery)}`
+      )
+      const { clusters } = await res.json()
+      setClusters(clusters ?? [])
     }, 300)
     return () => clearTimeout(t)
   }, [searchQuery, eventId])
 
+  // calls API route instead of Supabase directly
   async function handleLabelUpdate(clusterId: string, label: string) {
-    await updateClusterLabel({ clusterId, label })
+    const res = await fetch('/api/clusters/label', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clusterId, label }),
+    })
+
+    if (!res.ok) {
+      const err = await res.json()
+      console.error('Label update failed:', err.error)
+      return
+    }
+
     setClusters(prev =>
       prev.map(c => c.id === clusterId ? { ...c, label } : c)
     )
@@ -47,7 +62,6 @@ export default function EventPage() {
 
   return (
     <main style={{ minHeight: '100vh', padding: '40px 24px', maxWidth: 1100, margin: '0 auto' }}>
-      {/* Header */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -81,7 +95,6 @@ export default function EventPage() {
           </p>
         </div>
 
-        {/* Search bar */}
         <input
           type="text"
           placeholder="Search by name..."
